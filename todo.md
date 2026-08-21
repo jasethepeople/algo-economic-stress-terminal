@@ -28,3 +28,12 @@
 - [x] Add selectable BTC, ETH, and SOL calibration asset mixes with an editable calibration-rule control.
 - [x] Add test coverage for scenario-tag serialization and configurable calibration suggestions.
 - [x] Validate desktop and mobile organization, PDF, and calibration workflows; then save a new checkpoint.
+- [x] Add owner-controlled read-only share links for private scenarios with revocation support.
+- [x] Add side-by-side scenario comparison for price, liquidity, risk, agent survival, and parameter differences.
+- [x] Add user-managed scheduled delivery to a private in-app report inbox, with durable report records and activation guidance.
+- [x] Add unit coverage for share-link authorization, comparison calculations, and scheduled-report behavior.
+- [x] Validate sharing, comparison, and scheduling flows; then save a new checkpoint.
+- [x] Show parameter-by-parameter differences for the selected scenario pair in the comparison panel.
+- [x] Add tested render-ready comparison calculations for market, risk, and parameter deltas.
+- [x] Exercise authenticated share, revoke, comparison, inbox, and schedule-guidance controls through authenticated API-flow tests and the direct drawer inspection.
+- [ ] Save a final checkpoint after the complete collaboration workflow is verified.

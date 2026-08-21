@@ -1,49 +1,27 @@
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, stressScenarios, users } from "../drizzle/schema";
+import { InsertUser, reportInbox, reportSchedules, stressScenarios, users } from "../drizzle/schema";
 import type { SimulationParameters, SimulationSnapshot } from "../shared/simulation";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+export async function getDb() { if (!_db && process.env.DATABASE_URL) { try { _db = drizzle(process.env.DATABASE_URL); } catch (error) { console.warn("[Database] Failed to connect:", error); _db = null; } } return _db; }
+export async function upsertUser(user: InsertUser): Promise<void> { if (!user.openId) throw new Error("User openId is required for upsert"); const db = await getDb(); if (!db) return; const values: InsertUser = { openId: user.openId, lastSignedIn: user.lastSignedIn ?? new Date() }; const updateSet: Record<string, unknown> = { lastSignedIn: values.lastSignedIn }; for (const field of ["name", "email", "loginMethod"] as const) if (user[field] !== undefined) { values[field] = user[field] ?? null; updateSet[field] = user[field] ?? null; } if (user.role !== undefined) { values.role = user.role; updateSet.role = user.role; } else if (user.openId === ENV.ownerOpenId) { values.role = "admin"; updateSet.role = "admin"; } await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet }); }
+export async function getUserByOpenId(openId: string) { const db = await getDb(); if (!db) return undefined; return (await db.select().from(users).where(eq(users.openId, openId)).limit(1))[0]; }
 
-export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try { _db = drizzle(process.env.DATABASE_URL); } catch (error) { console.warn("[Database] Failed to connect:", error); _db = null; }
-  }
-  return _db;
-}
+export async function saveStressScenario(input: { ownerOpenId: string; name: string; tags: string[]; parameters: SimulationParameters; snapshot: SimulationSnapshot; }) { const db = await getDb(); if (!db) throw new Error("Scenario persistence is unavailable because the database is not connected."); await db.insert(stressScenarios).values(input); }
+export async function listStressScenarios(ownerOpenId: string) { const db = await getDb(); if (!db) return []; return db.select().from(stressScenarios).where(eq(stressScenarios.ownerOpenId, ownerOpenId)).orderBy(desc(stressScenarios.createdAt)).limit(36); }
+export async function getStressScenario(id: number, ownerOpenId: string) { const db = await getDb(); if (!db) return undefined; return (await db.select().from(stressScenarios).where(and(eq(stressScenarios.id, id), eq(stressScenarios.ownerOpenId, ownerOpenId))).limit(1))[0]; }
+export async function enableScenarioShare(id: number, ownerOpenId: string, token: string) { const db = await getDb(); if (!db) throw new Error("Scenario sharing is unavailable because the database is not connected."); await db.update(stressScenarios).set({ shareToken: token, shareEnabled: true }).where(and(eq(stressScenarios.id, id), eq(stressScenarios.ownerOpenId, ownerOpenId))); return getStressScenario(id, ownerOpenId); }
+export async function revokeScenarioShare(id: number, ownerOpenId: string) { const db = await getDb(); if (!db) throw new Error("Scenario sharing is unavailable because the database is not connected."); await db.update(stressScenarios).set({ shareEnabled: false, shareToken: null }).where(and(eq(stressScenarios.id, id), eq(stressScenarios.ownerOpenId, ownerOpenId))); }
+export async function getSharedScenario(token: string) { const db = await getDb(); if (!db) return undefined; return (await db.select().from(stressScenarios).where(and(eq(stressScenarios.shareToken, token), eq(stressScenarios.shareEnabled, true))).limit(1))[0]; }
 
-export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) throw new Error("User openId is required for upsert");
-  const db = await getDb();
-  if (!db) return;
-  const values: InsertUser = { openId: user.openId, lastSignedIn: user.lastSignedIn ?? new Date() };
-  const updateSet: Record<string, unknown> = { lastSignedIn: values.lastSignedIn };
-  for (const field of ["name", "email", "loginMethod"] as const) if (user[field] !== undefined) { values[field] = user[field] ?? null; updateSet[field] = user[field] ?? null; }
-  if (user.role !== undefined) { values.role = user.role; updateSet.role = user.role; } else if (user.openId === ENV.ownerOpenId) { values.role = "admin"; updateSet.role = "admin"; }
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
-}
-
-export async function getUserByOpenId(openId: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  return (await db.select().from(users).where(eq(users.openId, openId)).limit(1))[0];
-}
-
-export async function saveStressScenario(input: { ownerOpenId: string; name: string; tags: string[]; parameters: SimulationParameters; snapshot: SimulationSnapshot; }) {
-  const db = await getDb();
-  if (!db) throw new Error("Scenario persistence is unavailable because the database is not connected.");
-  await db.insert(stressScenarios).values(input);
-}
-
-export async function listStressScenarios(ownerOpenId: string) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(stressScenarios).where(eq(stressScenarios.ownerOpenId, ownerOpenId)).orderBy(desc(stressScenarios.createdAt)).limit(24);
-}
-
-export async function getStressScenario(id: number, ownerOpenId: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  return (await db.select().from(stressScenarios).where(and(eq(stressScenarios.id, id), eq(stressScenarios.ownerOpenId, ownerOpenId))).limit(1))[0];
-}
+export async function createReportSchedule(input: { ownerOpenId: string; cadence: "daily" | "weekly"; cronExpression: string; }) { const db = await getDb(); if (!db) throw new Error("Report scheduling is unavailable because the database is not connected."); const result = await db.insert(reportSchedules).values({ ...input, enabled: true }); return (await db.select().from(reportSchedules).where(eq(reportSchedules.id, Number(result[0].insertId))).limit(1))[0]; }
+export async function listReportSchedules(ownerOpenId: string) { const db = await getDb(); if (!db) return []; return db.select().from(reportSchedules).where(eq(reportSchedules.ownerOpenId, ownerOpenId)).orderBy(desc(reportSchedules.createdAt)).limit(12); }
+export async function getReportSchedule(id: number, ownerOpenId: string) { const db = await getDb(); if (!db) return undefined; return (await db.select().from(reportSchedules).where(and(eq(reportSchedules.id, id), eq(reportSchedules.ownerOpenId, ownerOpenId))).limit(1))[0]; }
+export async function getReportScheduleByTaskUid(taskUid: string) { const db = await getDb(); if (!db) return undefined; return (await db.select().from(reportSchedules).where(eq(reportSchedules.scheduleCronTaskUid, taskUid)).limit(1))[0]; }
+export async function updateReportScheduleTask(id: number, ownerOpenId: string, taskUid: string) { const db = await getDb(); if (!db) return; await db.update(reportSchedules).set({ scheduleCronTaskUid: taskUid }).where(and(eq(reportSchedules.id, id), eq(reportSchedules.ownerOpenId, ownerOpenId))); }
+export async function setReportScheduleEnabled(id: number, ownerOpenId: string, enabled: boolean) { const db = await getDb(); if (!db) return; await db.update(reportSchedules).set({ enabled }).where(and(eq(reportSchedules.id, id), eq(reportSchedules.ownerOpenId, ownerOpenId))); }
+export async function recordReport(input: { ownerOpenId: string; scheduleId?: number | null; title: string; snapshot: SimulationSnapshot; }) { const db = await getDb(); if (!db) throw new Error("Report inbox is unavailable because the database is not connected."); await db.insert(reportInbox).values({ ...input, scheduleId: input.scheduleId ?? null }); }
+export async function listInboxReports(ownerOpenId: string) { const db = await getDb(); if (!db) return []; return db.select().from(reportInbox).where(eq(reportInbox.ownerOpenId, ownerOpenId)).orderBy(desc(reportInbox.createdAt)).limit(24); }
+export async function markScheduleRun(id: number) { const db = await getDb(); if (!db) return; await db.update(reportSchedules).set({ lastRunAt: new Date() }).where(eq(reportSchedules.id, id)); }

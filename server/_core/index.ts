@@ -9,6 +9,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { marketSimulation } from "../simulation";
+import { handleReportInboxSchedule } from "../scheduledReports";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -66,6 +67,7 @@ async function startServer() {
     req.on("close", cleanup);
     res.on("close", cleanup);
   });
+  app.post("/api/scheduled/report-inbox", handleReportInboxSchedule);
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
