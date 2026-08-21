@@ -1,0 +1,1 @@
+ALTER TABLE `stressScenarios` MODIFY COLUMN `ownerOpenId` varchar(64) NOT NULL;

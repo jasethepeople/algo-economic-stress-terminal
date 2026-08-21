@@ -18,3 +18,8 @@
 - [x] Write unit tests covering simulation invariants, shock effects, risk metrics, and scenario serialization/replay.
 - [x] Run final type checks and tests, review runtime logs, and verify terminal behavior visually at desktop and mobile breakpoints.
 - [x] Create a final project checkpoint and document the request-scoped live-streaming behavior of the current hosting mode.
+- [x] Restrict saved stress-test scenarios to the authenticated owner and add ownership regression coverage.
+- [x] Add a client-side CSV export containing the current scenario parameters, risk metrics, agent summary, and order-book state.
+- [x] Add a print-ready risk-report view with a concise simulation summary and report metadata.
+- [x] Add an external market-calibration panel using public reference quotes with status, refresh controls, and parameter suggestions.
+- [x] Validate ownership, export, calibration, and responsive UI behavior; then save a new checkpoint.

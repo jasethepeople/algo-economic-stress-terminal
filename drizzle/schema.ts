@@ -15,7 +15,7 @@ export const users = mysqlTable("users", {
 
 export const stressScenarios = mysqlTable("stressScenarios", {
   id: int("id").autoincrement().primaryKey(),
-  ownerOpenId: varchar("ownerOpenId", { length: 64 }),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
   name: varchar("name", { length: 96 }).notNull(),
   parameters: json("parameters").$type<SimulationParameters>().notNull(),
   snapshot: json("snapshot").$type<SimulationSnapshot>().notNull(),
