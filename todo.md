@@ -23,3 +23,8 @@
 - [x] Add a print-ready risk-report view with a concise simulation summary and report metadata.
 - [x] Add an external market-calibration panel using public reference quotes with status, refresh controls, and parameter suggestions.
 - [x] Validate ownership, export, calibration, and responsive UI behavior; then save a new checkpoint.
+- [x] Add private scenario tags, tag filtering, and free-text private-vault search.
+- [x] Add a branded client-side PDF export that includes the live risk summary and report metadata.
+- [x] Add selectable BTC, ETH, and SOL calibration asset mixes with an editable calibration-rule control.
+- [x] Add test coverage for scenario-tag serialization and configurable calibration suggestions.
+- [x] Validate desktop and mobile organization, PDF, and calibration workflows; then save a new checkpoint.

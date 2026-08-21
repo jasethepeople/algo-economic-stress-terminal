@@ -22,6 +22,13 @@
       "when": 1787325939195,
       "tag": "0002_true_dexter_bennett",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1787326426838,
+      "tag": "0003_lush_wallop",
+      "breakpoints": true
     }
   ]
 }

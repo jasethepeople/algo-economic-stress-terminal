@@ -30,7 +30,7 @@ export async function getUserByOpenId(openId: string) {
   return (await db.select().from(users).where(eq(users.openId, openId)).limit(1))[0];
 }
 
-export async function saveStressScenario(input: { ownerOpenId: string; name: string; parameters: SimulationParameters; snapshot: SimulationSnapshot; }) {
+export async function saveStressScenario(input: { ownerOpenId: string; name: string; tags: string[]; parameters: SimulationParameters; snapshot: SimulationSnapshot; }) {
   const db = await getDb();
   if (!db) throw new Error("Scenario persistence is unavailable because the database is not connected.");
   await db.insert(stressScenarios).values(input);

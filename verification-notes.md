@@ -1,9 +1,7 @@
 # Verification Notes
 
-The enhanced desktop review confirms that the terminal preserves its dense dark quantitative layout while adding a visible reference-calibration block with BTC, ETH, and SOL prices, staged calibration controls, a private scenario-vault affordance, and CSV/print risk-report actions. The constrained panel wrappers preserve the intended compact vertical composition without the prior unused height.
+The terminal now exposes a private-vault organization workflow with a scenario name field, comma-separated tags, free-text search, and tag filters. The desktop review confirms these additions fit into the terminal’s left-side operations rail alongside the calibrated reference controls and the CSV, PDF, and print report actions.
 
-The enhanced mobile review confirms that the simulation controls, live Canvas chart, agent exposure, order book, systemic-risk dashboard, and execution tape remain readable in a vertical layout. The extended sidebar controls remain available through normal page scroll, preventing horizontal clipping on a narrow viewport.
+The mobile review confirms that the initial implementation hid the extended sidebar sections; the responsive rules were corrected. The final mobile view displays calibration asset selection, calibration-rule selection, tagged private-vault inputs, search, and branded report actions above the vertically stacked market workspace without horizontal clipping.
 
-Private scenario records are now database-owned by the authenticated user and the migration was applied only after verifying that no unowned records were present. The calibration feed uses the CoinGecko keyless public simple-price endpoint as a manual, cached reference input; it does not alter the simulation until the user stages and applies its suggested settings.
-
-The final validation pass completed with seven Vitest assertions passing and TypeScript completing without errors. Browser console review reported only normal development connection and React DevTools notices.
+The calibration feed remains a manual/cached public-reference input, consistent with its documented rate-limit constraints. The expanded automated suite passed nine tests, including tag normalization and calibration-rule variance, and TypeScript validation completed without errors.

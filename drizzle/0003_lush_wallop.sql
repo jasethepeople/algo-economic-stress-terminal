@@ -1,0 +1,1 @@
+ALTER TABLE `stressScenarios` ADD `tags` json;
