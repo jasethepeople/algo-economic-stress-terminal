@@ -1,11 +1,11 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import { InsertUser, stressScenarios, users } from "../drizzle/schema";
+import type { SimulationParameters, SimulationSnapshot } from "../shared/simulation";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -19,74 +19,57 @@ export async function getDb() {
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-
+  if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
-    return;
+  if (!db) return;
+  const values: InsertUser = { openId: user.openId, lastSignedIn: user.lastSignedIn ?? new Date() };
+  const updateSet: Record<string, unknown> = { lastSignedIn: values.lastSignedIn };
+  for (const field of ["name", "email", "loginMethod"] as const) {
+    if (user[field] !== undefined) {
+      values[field] = user[field] ?? null;
+      updateSet[field] = user[field] ?? null;
+    }
   }
-
-  try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
-    const updateSet: Record<string, unknown> = {};
-
-    const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
-
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
-    }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
-  } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
-    throw error;
+  if (user.role !== undefined) {
+    values.role = user.role;
+    updateSet.role = user.role;
+  } else if (user.openId === ENV.ownerOpenId) {
+    values.role = "admin";
+    updateSet.role = "admin";
   }
+  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
+  if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
-  return result.length > 0 ? result[0] : undefined;
+  return result[0];
 }
 
-// TODO: add feature queries here as your schema grows.
+export async function saveStressScenario(input: {
+  ownerOpenId: string | null;
+  name: string;
+  parameters: SimulationParameters;
+  snapshot: SimulationSnapshot;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Scenario persistence is unavailable because the database is not connected.");
+  await db.insert(stressScenarios).values(input);
+}
+
+export async function listStressScenarios(ownerOpenId?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const where = ownerOpenId ? eq(stressScenarios.ownerOpenId, ownerOpenId) : undefined;
+  return db.select().from(stressScenarios).where(where).orderBy(desc(stressScenarios.createdAt)).limit(24);
+}
+
+export async function getStressScenario(id: number, ownerOpenId?: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stressScenarios).where(eq(stressScenarios.id, id)).limit(1);
+  const scenario = result[0];
+  if (!scenario || (ownerOpenId && scenario.ownerOpenId && scenario.ownerOpenId !== ownerOpenId)) return undefined;
+  return scenario;
+}

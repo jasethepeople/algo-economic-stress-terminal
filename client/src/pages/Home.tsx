@@ -1,33 +1,106 @@
-import { useAuth } from "@/_core/hooks/useAuth";
+import { MarketCanvas } from "@/components/MarketCanvas";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
-import { Streamdown } from 'streamdown';
+import { Input } from "@/components/ui/input";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Slider } from "@/components/ui/slider";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/useMobile";
+import { trpc } from "@/lib/trpc";
+import { DEFAULT_SIMULATION_PARAMETERS, type AgentPosition, type ShockKind, type SimulationParameters, type SimulationSnapshot } from "../../../shared/simulation";
+import { Activity, AlertTriangle, BarChart3, CircleDollarSign, Database, Layers3, Loader2, Play, RotateCcw, Save, ShieldAlert, SlidersHorizontal, TrendingDown, TriangleAlert, Waves, Zap } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
-/**
- * All content in this page are only for example, replace with your own feature implementation
- * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
- */
+const formatUsd = (value: number, digits = 2) => `$${value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })}`;
+const formatCompact = (value: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+const formatPct = (value: number, digits = 2) => `${(value * 100).toFixed(digits)}%`;
+const parameterMeta: { key: keyof SimulationParameters; label: string; min: number; max: number; step: number; suffix: string }[] = [
+  { key: "agentCount", label: "Agent population", min: 24, max: 180, step: 1, suffix: " agents" },
+  { key: "volatility", label: "Noise volatility", min: 0.04, max: 0.98, step: 0.01, suffix: " σ" },
+  { key: "curveExponent", label: "Bonding curve", min: 0.45, max: 3.1, step: 0.01, suffix: " α" },
+  { key: "taxRate", label: "Transaction tax", min: 0, max: 6, step: 0.05, suffix: "%" },
+  { key: "momentumAggression", label: "Momentum bias", min: 0.05, max: 1.5, step: 0.01, suffix: "×" },
+  { key: "initialLiquidity", label: "Initial liquidity", min: 100_000, max: 4_000_000, step: 50_000, suffix: "" },
+  { key: "seedCapital", label: "Seed capital", min: 250_000, max: 12_000_000, step: 50_000, suffix: "" },
+  { key: "tickCadenceMs", label: "Tick cadence", min: 180, max: 1_600, step: 20, suffix: " ms" },
+];
+
+function Metric({ label, value, delta, tone = "cyan" }: { label: string; value: string; delta?: string; tone?: "cyan" | "green" | "amber" | "red" }) {
+  const tones = { cyan: "text-cyan-300", green: "text-emerald-300", amber: "text-amber-300", red: "text-rose-300" };
+  return <div className="metric-chip"><span>{label}</span><strong className={tones[tone]}>{value}</strong>{delta && <em>{delta}</em>}</div>;
+}
+
+function PanelHeader({ icon: Icon, title, children }: { icon: typeof Activity; title: string; children?: React.ReactNode }) {
+  return <div className="panel-heading"><div className="flex items-center gap-2"><span className="panel-icon"><Icon size={13} /></span><span>{title}</span></div>{children}</div>;
+}
+
+function ParameterControl({ meta, value, onChange }: { meta: typeof parameterMeta[number]; value: number; onChange: (value: number) => void }) {
+  const display = meta.key === "initialLiquidity" || meta.key === "seedCapital" ? formatCompact(value) : value;
+  return <div className="parameter"><div><span>{meta.label}</span><b>{display}{meta.suffix}</b></div><div className="flex items-center gap-2"><Slider value={[value]} min={meta.min} max={meta.max} step={meta.step} onValueChange={([next]) => onChange(next)} /><Input aria-label={meta.label} type="number" min={meta.min} max={meta.max} step={meta.step} value={value} onChange={event => onChange(Number(event.target.value) || meta.min)} /></div></div>;
+}
+
+function AgentMix({ agents }: { agents: AgentPosition[] }) {
+  const groups = ["Arbitrageur", "Liquidity Provider", "Momentum"] as const;
+  return <div className="pt-2"><div className="grid grid-cols-[1.15fr_.8fr_.8fr_.65fr] gap-1 border-b border-white/[0.06] pb-1 text-[8px] uppercase tracking-[.1em] text-slate-500"><span>Archetype</span><span>Inventory</span><span>PnL</span><span>Win / Live</span></div>{groups.map((group, index) => {
+    const members = agents.filter(agent => agent.archetype === group);
+    const inventory = members.reduce((sum, agent) => sum + agent.inventory, 0);
+    const pnl = members.reduce((sum, agent) => sum + agent.pnl, 0);
+    const winners = members.filter(agent => agent.pnl >= 0).length;
+    const survivors = members.filter(agent => agent.survival > 0).length;
+    const colors = ["#47ddea", "#aa8cff", "#f5b94d"];
+    return <div className="grid grid-cols-[1.15fr_.8fr_.8fr_.65fr] gap-1 border-b border-white/[0.045] py-2 text-[9px] font-mono" key={group}><span className="text-slate-300"><i className="mr-1 inline-block h-1.5 w-1.5 rounded-full" style={{ background: colors[index] }} />{group}</span><span className="text-slate-400">{formatCompact(inventory)}</span><span className={pnl >= 0 ? "text-emerald-300" : "text-rose-300"}>{pnl >= 0 ? "+" : ""}{formatCompact(pnl)}</span><span className="text-slate-300">{Math.round(winners / Math.max(members.length, 1) * 100)}% / {survivors}</span></div>;
+  })}</div>;
+}
+
+function OrderBook({ snapshot }: { snapshot: SimulationSnapshot }) {
+  const maximum = Math.max(...snapshot.bids.map(level => level.total), ...snapshot.asks.map(level => level.total), 1);
+  const row = (level: SimulationSnapshot["bids"][number], side: "bid" | "ask") => <div key={`${side}-${level.price}`} className="book-row"><span className={side === "bid" ? "text-emerald-300" : "text-rose-300"}>{level.price.toFixed(3)}</span><span>{level.depth.toFixed(1)}</span><span className="relative text-right"><i className={side === "bid" ? "book-fill bid" : "book-fill ask"} style={{ width: `${level.total / maximum * 92}%` }} />{level.total.toFixed(1)}</span></div>;
+  return <div className="panel h-full"><PanelHeader icon={Layers3} title="ORDER BOOK / NEXUS-USD"><span className="status-dot">LIVE</span></PanelHeader><div className="book-columns"><span>PRICE</span><span>SIZE</span><span className="text-right">CUMULATIVE</span></div><div className="book-stack">{snapshot.asks.slice().reverse().slice(0, 5).map(level => row(level, "ask"))}</div><div className="my-2 flex items-center justify-between border-y border-white/[0.07] py-2 font-mono"><span className="text-xs text-slate-400">MID <b className="ml-1 text-slate-100">{formatUsd(snapshot.price, 3)}</b></span><span className="text-xs text-amber-300">SPR {snapshot.spread.toFixed(3)}</span></div><div className="book-stack">{snapshot.bids.slice(0, 5).map(level => row(level, "bid"))}</div><div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/[0.06] pt-3 text-[10px] uppercase tracking-[0.12em] text-slate-500"><div>Depth <b className="float-right font-mono text-slate-300">{formatCompact(snapshot.liquidity / snapshot.price)}</b></div><div>Imbalance <b className={`float-right font-mono ${snapshot.imbalance >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{snapshot.imbalance >= 0 ? "+" : ""}{(snapshot.imbalance * 100).toFixed(1)}%</b></div></div></div>;
+}
+
+function RiskPanel({ snapshot }: { snapshot: SimulationSnapshot }) {
+  const risk = snapshot.risk;
+  const probability = Math.round(risk.collapseProbability * 100);
+  const density = useMemo(() => { const bins = Array.from({ length: 9 }, () => 0); risk.monteCarloDistribution.forEach(point => { bins[Math.max(0, Math.min(8, Math.floor((point + 20) / 5)))] += 1; }); return bins; }, [risk.monteCarloDistribution]);
+  return <div className="panel h-full"><PanelHeader icon={ShieldAlert} title="SYSTEMIC RISK / MONTE CARLO"><span className={probability > 55 ? "risk-badge elevated" : "risk-badge"}>{probability > 55 ? "ELEVATED" : "MONITOR"}</span></PanelHeader><div className="risk-orbit"><svg viewBox="0 0 120 120"><circle className="orbit-track" cx="60" cy="60" r="48" /><circle className="orbit-progress" cx="60" cy="60" r="48" style={{ strokeDashoffset: 302 - 302 * risk.collapseProbability }} /></svg><div><strong>{probability}<small>%</small></strong><span>COLLAPSE<br />PROB.</span></div></div><div className="grid grid-cols-3 gap-2 py-2 text-center"><div className="risk-mini"><span>GINI</span><b>{risk.giniCoefficient.toFixed(3)}</b></div><div className="risk-mini"><span>SURVIVAL</span><b>{formatPct(risk.survivalRate, 1)}</b></div><div className="risk-mini"><span>DD</span><b className="text-rose-300">{formatPct(risk.drawdown, 1)}</b></div></div><div className="mt-3"><div className="mb-2 flex justify-between text-[10px] uppercase tracking-[0.12em] text-slate-500"><span>42 Path Return Density</span><span className="text-amber-300">VaR EST.</span></div><div className="density-bars">{density.map((count, index) => <i key={index} className={index < 4 ? "negative" : ""} style={{ height: `${Math.max(8, count * 13)}%` }} />)}</div></div><div className="mt-3 border-t border-white/[0.06] pt-3"><div className="mb-2 flex justify-between text-[9px] uppercase tracking-[.11em] text-slate-500"><span>Survival trend / 24 ticks</span><b className="text-emerald-300">{formatPct(risk.survivalTrend.at(-1) ?? 0, 1)}</b></div><div className="flex h-7 items-end gap-0.5">{risk.survivalTrend.map((point, index) => <i key={index} className="flex-1 bg-emerald-400/75" style={{ height: `${Math.max(8, point * 100)}%` }} />)}</div></div><div className="mt-3 space-y-2 border-t border-white/[0.06] pt-3 text-[10px] uppercase tracking-[0.1em] text-slate-400"><div className="flex justify-between"><span>Liquidity health</span><b className="font-mono text-slate-200">{formatPct(Math.min(risk.liquidityHealth, 1), 1)}</b></div><div className="risk-track"><i style={{ width: `${Math.min(100, risk.liquidityHealth * 100)}%` }} /></div><div className="flex justify-between"><span>Concentration</span><b className="font-mono text-amber-300">{formatPct(risk.concentration, 1)}</b></div></div></div>;
+}
+
 export default function Home() {
-  // The useAuth hook provides authentication state.
-  // To implement login/logout, call logout(), or start login from an event
-  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
-  // startLogin() during render (no href={startLogin()}) — it mints a one-time
-  // nonce cookie and must run only at the moment of navigation.
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
+  const initialQuery = trpc.market.snapshot.useQuery(undefined, { refetchOnWindowFocus: false });
+  const scenariosQuery = trpc.scenarios.list.useQuery(undefined, { refetchOnWindowFocus: false });
+  const tickMutation = trpc.market.tick.useMutation();
+  const configureMutation = trpc.market.configure.useMutation();
+  const resetMutation = trpc.market.reset.useMutation();
+  const shockMutation = trpc.market.shock.useMutation();
+  const saveMutation = trpc.scenarios.save.useMutation();
+  const loadMutation = trpc.scenarios.load.useMutation();
+  const [snapshot, setSnapshot] = useState<SimulationSnapshot | null>(null);
+  const [parameters, setParameters] = useState<SimulationParameters>(DEFAULT_SIMULATION_PARAMETERS);
+  const [scenarioName, setScenarioName] = useState("Baseline equilibrium");
+  const [connection, setConnection] = useState<"STREAMING" | "FALLBACK" | "CONNECTING">("CONNECTING");
+  const [lastTick, setLastTick] = useState(Date.now());
+  const isMobile = useIsMobile();
 
-  // If theme is switchable in App.tsx, we can implement theme toggling like this:
-  // const { theme, toggleTheme } = useTheme();
+  useEffect(() => { if (initialQuery.data && !snapshot) { setSnapshot(initialQuery.data); setParameters(initialQuery.data.parameters); } }, [initialQuery.data, snapshot]);
+  useEffect(() => {
+    let active = true; let fallbackTimer: number | undefined; const stream = new EventSource("/api/market-stream");
+    const beginFallback = () => { if (fallbackTimer) return; setConnection("FALLBACK"); fallbackTimer = window.setInterval(() => tickMutation.mutate(undefined, { onSuccess: data => { if (active) { setSnapshot(data); setLastTick(Date.now()); } } }), 620); };
+    stream.onopen = () => { if (active) setConnection("STREAMING"); };
+    stream.onmessage = event => { try { const next = JSON.parse(event.data) as SimulationSnapshot; if (active) { setSnapshot(next); setLastTick(Date.now()); setConnection("STREAMING"); } } catch { beginFallback(); } };
+    stream.onerror = () => window.setTimeout(beginFallback, 900);
+    return () => { active = false; stream.close(); if (fallbackTimer) window.clearInterval(fallbackTimer); };
+  }, []);
 
-  return (
-    <div className="min-h-screen flex flex-col">
-      <main>
-        {/* Example: lucide-react for icons */}
-        <Loader2 className="animate-spin" />
-        Example Page
-        {/* Example: Streamdown for markdown rendering */}
-        <Streamdown>Any **markdown** content</Streamdown>
-        <Button variant="default">Example Button</Button>
-      </main>
-    </div>
-  );
+  const applyParameters = () => configureMutation.mutate(parameters, { onSuccess: data => { setSnapshot(data); setParameters(data.parameters); toast.success("Market microstructure recalibrated"); }, onError: () => toast.error("Parameters could not be applied") });
+  const triggerShock = (kind: ShockKind) => shockMutation.mutate({ kind }, { onSuccess: data => { setSnapshot(data); toast.warning(`${kind.replace("_", " ").toUpperCase()} injected into market state`); } });
+  const saveScenario = () => saveMutation.mutate({ name: scenarioName }, { onSuccess: () => { toast.success("Scenario saved to the stress-test vault"); scenariosQuery.refetch(); }, onError: () => toast.error("Scenario persistence is currently unavailable") });
+  const reset = () => resetMutation.mutate(parameters, { onSuccess: data => { setSnapshot(data); toast.success("New simulation session initialized"); } });
+  const loadScenario = (id: number) => loadMutation.mutate({ id }, { onSuccess: data => { setSnapshot(data); setParameters(data.parameters); toast.success("Persisted scenario replay restored"); }, onError: () => toast.error("Scenario could not be replayed") });
+  if (!snapshot) return <div className="terminal-loading"><Loader2 className="animate-spin text-cyan-300" size={28} /><span>INITIALIZING MARKET MICROSTRUCTURE</span></div>;
+  const priceMove = (snapshot.price - snapshot.previousPrice) / Math.max(snapshot.previousPrice, 0.001);
+  const activeShock = snapshot.activeShock ? `${snapshot.activeShock.replace("_", " ")} / ${snapshot.shockTicksRemaining}t` : "No exogenous shock";
+
+  return <main className="terminal-shell"><header className="terminal-header"><div className="brand"><div className="brand-mark"><Activity size={17} /></div><div><h1>APEX <b>MS</b></h1><p>ECONOMIC STRESS TERMINAL <span>/ v4.2</span></p></div></div><div className="header-separator" /><div className="market-identity"><span className="eyebrow">ACTIVE SYNTHETIC PAIR</span><strong>NEXUS-USD <i>PERPETUAL</i></strong></div><div className="ticker-strip"><Metric label="MARK" value={formatUsd(snapshot.price, 3)} delta={`${priceMove >= 0 ? "+" : ""}${formatPct(priceMove, 2)}`} tone={priceMove >= 0 ? "green" : "red"} /><Metric label="24H VOLUME" value={formatCompact(snapshot.volume * 42)} tone="cyan" /><Metric label="RISK SCORE" value={`${snapshot.risk.riskScore.toFixed(1)} / 100`} tone={snapshot.risk.riskScore > 55 ? "red" : "amber"} /></div><div className="stream-status"><i className={connection === "STREAMING" ? "pulse" : "pulse warning"} /><span>{connection}</span><small>{Math.max(0, Date.now() - lastTick) < 900 ? "SYNC" : "WAIT"}</small></div></header>
+  <section className="terminal-main"><aside className="terminal-sidebar"><div className="side-section"><div className="side-label"><SlidersHorizontal size={13} /> SIMULATION PARAMETERS</div>{parameterMeta.map(meta => <ParameterControl key={meta.key} meta={meta} value={parameters[meta.key]} onChange={value => setParameters(current => ({ ...current, [meta.key]: value }))} />)}<Button className="apply-button" onClick={applyParameters} disabled={configureMutation.isPending}><Play size={14} /> {configureMutation.isPending ? "CALIBRATING" : "APPLY LIVE MODEL"}</Button><Button variant="outline" className="reset-button" onClick={reset}><RotateCcw size={13} /> RESET SESSION</Button></div><div className="side-section shocks"><div className="side-label"><TriangleAlert size={13} /> EXOGENOUS SHOCKS</div><p>{activeShock}</p><button onClick={() => triggerShock("flash_crash")}><TrendingDown size={14} /><span>FLASH CRASH</span><i>- β</i></button><button onClick={() => triggerShock("liquidity_drain")}><Waves size={14} /><span>LIQUIDITY DRAIN</span><i>- L</i></button><button onClick={() => triggerShock("whale_dump")}><CircleDollarSign size={14} /><span>WHALE DUMP</span><i>- Ω</i></button></div><div className="side-section vault"><div className="side-label"><Database size={13} /> SCENARIO VAULT</div><div className="save-row"><Input value={scenarioName} onChange={event => setScenarioName(event.target.value)} maxLength={96} /><Tooltip><TooltipTrigger asChild><button onClick={saveScenario}><Save size={14} /></button></TooltipTrigger><TooltipContent>Save parameter snapshot</TooltipContent></Tooltip></div><div className="scenario-list">{scenariosQuery.data?.slice(0, 4).map(scenario => <button key={scenario.id} onClick={() => loadScenario(scenario.id)}><span>{scenario.name}</span><small>{new Date(scenario.createdAt).toLocaleDateString()}</small></button>) ?? <span className="empty-copy">No persisted scenarios</span>}</div></div></aside>
+  <section className="terminal-workspace"><div className="workspace-topline"><div className="mode-tabs"><button className="active">MARKET STATE</button><button>AGENT GRAPH</button><button>RISK SURFACE</button></div><div className="session-meta"><span>SESSION <b>{snapshot.sessionId}</b></span><span>TICK <b>{snapshot.tick.toString().padStart(6, "0")}</b></span><span>CURVE <b>α {snapshot.parameters.curveExponent.toFixed(2)}</b></span></div></div><ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className={isMobile ? "h-[780px] min-h-[780px]" : "h-[385px] min-h-[385px]"}><ResizablePanel defaultSize={72} minSize={isMobile ? 52 : 46}><section className="panel chart-panel h-full"><PanelHeader icon={BarChart3} title="PRICE DISCOVERY / BONDING CURVE"><div className="chart-legend"><span><i className="dot green" />UPTICK</span><span><i className="dot red" />DOWNTICK</span><span><i className="dot amber" />SLIPPAGE</span></div></PanelHeader><MarketCanvas candles={snapshot.candles} slippage={snapshot.slippageCurve} price={snapshot.price} cadenceMs={snapshot.parameters.tickCadenceMs} /><div className="chart-footer"><span>Reserve <b>{formatUsd(snapshot.reserve, 0)}</b></span><span>Supply <b>{formatCompact(snapshot.supply)}</b></span><span>Tax <b>{snapshot.parameters.taxRate.toFixed(2)}%</b></span><span>Curve fair value <b>{formatUsd(snapshot.price * (1 + snapshot.imbalance * 0.012), 3)}</b></span></div></section></ResizablePanel><ResizableHandle withHandle={!isMobile} className="mx-1 bg-white/[0.05]" /><ResizablePanel defaultSize={28} minSize={22}><section className="panel agent-panel h-full"><PanelHeader icon={Zap} title="AGENT EXPOSURE"><span className="status-dot violet">{snapshot.agents.length} ACTIVE</span></PanelHeader><AgentMix agents={snapshot.agents} /><div className="mt-5 border-t border-white/[0.06] pt-3"><div className="mb-2 flex justify-between text-[10px] uppercase tracking-[0.11em] text-slate-500"><span>Wealth dispersion</span><span>{formatPct(snapshot.risk.giniCoefficient)}</span></div><div className="dispersion"><i style={{ width: `${Math.min(100, snapshot.risk.giniCoefficient * 100)}%` }} /></div></div><div className="mt-4 grid grid-cols-2 gap-2"><div className="small-stat"><span>Survivors</span><b>{Math.round(snapshot.risk.survivalRate * snapshot.agents.length)} / {snapshot.agents.length}</b></div><div className="small-stat"><span>Median agent</span><b>{formatCompact(snapshot.agents[Math.floor(snapshot.agents.length / 2)]?.wealth ?? 0)}</b></div></div></section></ResizablePanel></ResizablePanelGroup><ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className={isMobile ? "mt-[10px] h-[1080px] min-h-[1080px]" : "mt-[10px] h-[360px] min-h-[310px]"}><ResizablePanel defaultSize={28} minSize={20}><OrderBook snapshot={snapshot} /></ResizablePanel><ResizableHandle withHandle={!isMobile} className="mx-1 bg-white/[0.05]" /><ResizablePanel defaultSize={35} minSize={24}><RiskPanel snapshot={snapshot} /></ResizablePanel><ResizableHandle withHandle={!isMobile} className="mx-1 bg-white/[0.05]" /><ResizablePanel defaultSize={37} minSize={25}><section className="panel tape-panel h-full"><PanelHeader icon={Activity} title="EXECUTION TAPE"><span className="text-[10px] text-slate-500">LAST 18 EVENTS</span></PanelHeader><div className="tape-head"><span>TIME</span><span>AGENT</span><span>SIDE</span><span>SIZE</span><span className="text-right">PRICE</span></div><div className="tape-rows">{snapshot.events.map(event => <div key={event.id} className="tape-row"><span>{new Date(event.time).toLocaleTimeString([], { hour12: false, minute: "2-digit", second: "2-digit" })}</span><span className="truncate text-slate-300">{event.agent}</span><span className={event.action === "BUY" ? "text-emerald-300" : event.action === "SELL" ? "text-rose-300" : "text-amber-300"}>{event.action}</span><span>{event.size.toFixed(2)}</span><span className="text-right text-slate-200">{event.price.toFixed(3)}</span></div>)}</div></section></ResizablePanel></ResizablePanelGroup></section></section><footer className="terminal-footer"><div><span>ENGINE</span><b>AGENT-BASED MARKET MICROSTRUCTURE</b></div><div><span>MC PATHS</span><b>42 / TICK</b></div><div><span>DEPLOYMENT</span><b>REQUEST-SCOPED LIVE STREAM</b></div><div className="ml-auto"><AlertTriangle size={12} /><span>Synthetic simulation only. Not market data.</span></div></footer></main>;
 }
