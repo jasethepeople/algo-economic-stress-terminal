@@ -36,4 +36,4 @@
 - [x] Show parameter-by-parameter differences for the selected scenario pair in the comparison panel.
 - [x] Add tested render-ready comparison calculations for market, risk, and parameter deltas.
 - [x] Exercise authenticated share, revoke, comparison, inbox, and schedule-guidance controls through authenticated API-flow tests and the direct drawer inspection.
-- [ ] Save a final checkpoint after the complete collaboration workflow is verified.
+- [x] Save a final checkpoint after the complete collaboration workflow is verified.
